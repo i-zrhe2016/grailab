@@ -406,6 +406,25 @@ describe('stochastic indicator visibility', () => {
   })
 })
 
+describe('stochastic history backfill', () => {
+  it('requests older candles while the chart edge is still inside the warm-up region', async () => {
+    localStorage.setItem(stochVisibilityKey(''), 'true')
+    wrapper = mount(MarketChart, { props: { snapshot: snapshot(), loading: false } })
+    await nextTick()
+    // Default 1m groups need 178 warm-up candles; three loaded candles leave a gap.
+    expect(wrapper.emitted('load-stoch-history')).toEqual([[300]])
+    const older = Array.from({ length: 300 }, (_, index) => candle(candles[0].timestamp - (300 - index) * 60))
+    await wrapper.setProps({ snapshot: snapshot([...older, ...candles]), playbackIndex: 302 })
+    expect(wrapper.emitted('load-stoch-history')).toHaveLength(1)
+  })
+  it('does not request history while stoch is hidden', async () => {
+    localStorage.setItem(stochVisibilityKey(''), 'false')
+    wrapper = mount(MarketChart, { props: { snapshot: snapshot(), loading: false } })
+    await nextTick()
+    expect(wrapper.emitted('load-stoch-history')).toBeUndefined()
+  })
+})
+
 describe('classic indicator library', () => {
   it('hydrates the stored selection for the current timeframe and reports picker changes', async () => {
     wrapper = mount(MarketChart, {

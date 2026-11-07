@@ -79,6 +79,7 @@ import {
   STOCH_STORAGE_KEY,
   STOCH_VISIBILITY_KEY,
   stochVisibilityKey,
+  stochWarmupBars,
   validStochLengths,
   type StochGroupCount,
   type StochLineKey,
@@ -156,6 +157,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (event: 'drawings-changed', drawings: ReplayDrawing[]): void
   (event: 'load-history'): void
+  (event: 'load-stoch-history', bars: number): void
   (event: 'indicators-changed', payload: { timeframe: string; indicators: ReplayIndicator[] }): void
 }>()
 
@@ -193,6 +195,7 @@ function toggleStoch() {
   stochVisible.value = !stochVisible.value
   syncStochSeries()
   updateStoch()
+  ensureStochHistory()
   try { localStorage.setItem(scopedStorageKey(stochVisibilityKey(props.projectId)), String(stochVisible.value)) } catch { /* Storage may be disabled. */ }
 }
 
@@ -346,6 +349,7 @@ function applyStoch(reset = false) {
   stochDraft.value = [...setting.lengths]
   syncStochSeries()
   updateStoch()
+  ensureStochHistory()
   try {
     localStorage.setItem(scopedStorageKey(STOCH_STORAGE_KEY), JSON.stringify(stochSettings.value))
     void nextTick(() => { stochMessage.value = reset ? t('chart.stochDefaultsRestored') : t('chart.stochApplied') })
@@ -404,6 +408,33 @@ function updateStoch() {
       ? { time: point.timestamp as UTCTimestamp }
       : { time: point.timestamp as UTCTimestamp, value: point[key] as number }))
   })
+}
+
+const STOCH_HISTORY_MARGIN = 30
+let stochHistoryEarliest: number | null = null
+
+// Stoch only uses played candles, so its longest lines need earlier market data than
+// the replay window holds. When the chart's left edge falls inside that warm-up region,
+// ask App for older history and recompute instead of leaving the curve cut off.
+function ensureStochHistory() {
+  if (!stochVisible.value || !stochSeries.length || !validStochLengths(stochLengths.value)) return
+  const count = visibleCandles.value.length
+  if (!count) return
+  const range = priceChart?.timeScale().getVisibleLogicalRange()
+  const firstVisible = range && Number.isFinite(range.from)
+    ? Math.max(0, Math.floor(range.from))
+    : Math.max(0, count - playbackWindowBars(count))
+  const warmup = Math.max(...stochLengths.value.map(stochWarmupBars))
+  const missing = warmup - firstVisible
+  if (missing <= 0) {
+    stochHistoryEarliest = null
+    return
+  }
+  const earliest = visibleCandles.value[0].timestamp
+  // One request per loaded left edge: an exhausted dataset leaves it unchanged and stops.
+  if (earliest === stochHistoryEarliest) return
+  stochHistoryEarliest = earliest
+  emit('load-stoch-history', Math.min(5000, Math.ceil((missing + STOCH_HISTORY_MARGIN) / 100) * 100))
 }
 
 interface DrawingToolOption {
@@ -914,6 +945,7 @@ function setSeriesData() {
   } else {
     setPlaybackRange()
   }
+  ensureStochHistory()
 }
 
 function resizeChart() {
@@ -998,6 +1030,7 @@ function buildCharts() {
     bumpToolbar()
     const range = priceChart?.timeScale().getVisibleLogicalRange()
     if (props.historyAvailable && range && range.from < 30) emit('load-history')
+    ensureStochHistory()
   }
   priceChart.timeScale().subscribeVisibleLogicalRangeChange(visibleRangeHandler)
 

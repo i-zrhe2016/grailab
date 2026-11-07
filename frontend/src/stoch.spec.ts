@@ -4,6 +4,7 @@ import {
   defaultStochSetting,
   readStochSettings,
   STOCH_DEFAULTS,
+  stochWarmupBars,
   validStochLengths,
 } from './stoch'
 import type { Candle } from './types'
@@ -53,6 +54,19 @@ describe('Pine close-based Stoch', () => {
     const six = calculateStoch(input, [3, 2, 5, 2, 3, 5])
     expect(six.map(p => [p.k6, p.d6])).toEqual(six.map(p => [p.k3, p.d3]))
     expect(six.map(p => [p.k1, p.d1])).toEqual(calculateStoch(input, [3, 2]).map(p => [p.k1, p.d1]))
+  })
+  it('reports how many leading candles each length needs before D is defined', () => {
+    expect(stochWarmupBars(1)).toBe(0)
+    expect(stochWarmupBars(5)).toBe(2)
+    expect(stochWarmupBars(30)).toBe(16)
+    expect(stochWarmupBars(300)).toBe(178)
+    expect(stochWarmupBars(1200)).toBe(718)
+    const input = candles(Array.from({ length: 40 }, (_, index) => 10 + index))
+    for (const length of [5, 15, 30]) {
+      const point = calculateStoch(input, [length, length])
+      expect(point[stochWarmupBars(length) - 1].d1).toBeNull()
+      expect(point[stochWarmupBars(length)].d1).toBeTypeOf('number')
+    }
   })
   it('handles empty history, rejects invalid lengths and sanitizes saved settings', () => {
     expect(calculateStoch([], [10, 20])).toEqual([])

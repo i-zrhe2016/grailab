@@ -90,6 +90,27 @@ describe('multi-asset replay', () => {
     expect(loadReplayProjects().find((project) => project.id === btc.id)?.from).toBe(btc.from)
   })
 
+  it('loads earlier candles and keeps the replay position when the chart needs stoch warm-up', async () => {
+    stored('replay')
+    wrapper = mount(App)
+    await flushPromises()
+    await flushPromises()
+    const chart = wrapper.findComponent({ name: 'MarketChartMock' })
+    const earliest = market.first_timestamp
+    const before = vi.mocked(getMarketSnapshot).mock.calls.length
+    const older = { ...snapshot('1m', earliest - 300 * 60), candles: [{ ...snapshot().candles[0]!, timestamp: earliest - 300 * 60 }] }
+    vi.mocked(getMarketSnapshot).mockResolvedValueOnce(older)
+    chart.vm.$emit('load-stoch-history', 300)
+    await flushPromises()
+    const query = vi.mocked(getMarketSnapshot).mock.calls[before]?.[0]
+    expect(query).toMatchObject({ timeframe: '1m', from: earliest - 300 * 60, to: earliest, limit: 300 })
+    const rows = JSON.parse(wrapper.find('[data-testid="chart-mock"]').text()) as MarketSnapshot
+    expect(rows.candles[0]?.timestamp).toBe(earliest - 300 * 60)
+    expect(rows.candles.at(-1)?.timestamp).toBe(earliest)
+    // The same candle stays current after older rows shift every index.
+    expect(loadReplayProjects().find((project) => project.id === 'local')?.cursorTimestamp).toBe(earliest)
+  })
+
   it('offers ten markets and sends ETH to the main chart and every pane', async () => {
     const ethMarket = { ...market, symbol: 'ETHUSD', last_timestamp: market.first_timestamp + 20000 * 60 }
     const project = { ...createSeedReplayProject(ethMarket), id: 'eth', panes: ['1m', '5m'] }

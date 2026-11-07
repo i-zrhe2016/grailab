@@ -1097,6 +1097,51 @@ async function loadReplayHistory() {
   }
 }
 
+// Stoch warm-up beyond the replay window: the chart asks for earlier candles so its
+// longer lines can be computed without using future data.
+const stochHistoryLoading = ref(false)
+const stochHistoryAttempt = ref('')
+
+async function loadStochHistory(bars: number) {
+  const project = activeProject.value
+  const snapshot = replaySnapshot.value
+  if (!project || !snapshot?.candles.length || replayLoading.value || stochHistoryLoading.value) return
+  const earliest = snapshot.candles[0].timestamp
+  const step = timeframeStepSeconds(project.timeframe)
+  const count = Math.min(5000, Math.max(1, Math.ceil(bars)))
+  const from = Math.max(0, earliest - step * count)
+  if (from >= earliest) return
+  // Retry only after the loaded left edge moves; a dataset with no older candles stops here.
+  const attempt = `${project.id}:${project.timeframe}:${earliest}`
+  if (attempt === stochHistoryAttempt.value) return
+  stochHistoryAttempt.value = attempt
+  const requestId = snapshotRequestId
+  stochHistoryLoading.value = true
+  try {
+    const page = await getMarketSnapshot({
+      symbol: project.symbol,
+      timeframe: project.timeframe,
+      from,
+      to: earliest,
+      limit: count,
+      lengths: replayLengths,
+    })
+    if (requestId !== snapshotRequestId || !replaySnapshot.value) return
+    if (!page.candles.some((candle) => candle.timestamp < earliest)) return
+    const timestamp = currentCandle.value?.timestamp
+    const merged = mergeMarketSnapshots(replaySnapshot.value, page)
+    replaySnapshot.value = merged
+    reanchorProjectTrades(project.id, merged.candles)
+    if (timestamp !== undefined) {
+      updateProjectCursor(project.id, replayCursorIndexAtOrBefore(merged.candles, timestamp), timestamp)
+    }
+  } catch {
+    // Older candles only warm up indicators; keep the current replay window on failure.
+  } finally {
+    if (requestId === snapshotRequestId) stochHistoryLoading.value = false
+  }
+}
+
 const jumpTimeInput = ref('')
 const jumpError = ref('')
 
@@ -1148,6 +1193,8 @@ async function loadReplaySnapshot(
   replayHistoryBefore.value = null
   replayHistoryLoading.value = false
   replayHistoryError.value = ''
+  stochHistoryLoading.value = false
+  stochHistoryAttempt.value = ''
 
   try {
     if (!metadata.value || normalizeSymbol(metadata.value.symbol) !== normalizeSymbol(project.symbol)) {
@@ -1832,6 +1879,7 @@ onBeforeUnmount(() => {
               class="fullscreen-chart"
               :history-available="replayHistoryBefore !== null && !replayHistoryError"
               @load-history="loadReplayHistory"
+              @load-stoch-history="loadStochHistory"
               :snapshot="replaySnapshot"
               :loading="replayLoading"
               :error="activeError"
