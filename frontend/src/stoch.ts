@@ -55,6 +55,14 @@ export function validStochLengths(lengths: readonly number[]): boolean {
   return lengths.length >= 2 && lengths.length <= 6 && lengths.every(validStochLength)
 }
 
+// Leading candles whose D value is still undefined: K needs one full smoothing
+// window of `smooth` candles and D needs a second one. Longer K lengths therefore
+// need earlier market data before their curve can appear on the chart.
+export function stochWarmupBars(length: number): number {
+  const smooth = Math.max(1, Math.round(length / 10 * 3))
+  return Math.max(0, smooth * 2 - 2)
+}
+
 export function defaultStochSetting(period: string): StochSetting {
   const lengths = STOCH_DEFAULTS[period] ?? STOCH_DEFAULTS['1h']
   return { groups: 4, lengths: [...lengths] as StochLengths }
